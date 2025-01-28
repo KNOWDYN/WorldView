@@ -4,6 +4,9 @@
 
 WorldView is a research project designed to study bias and reasoning patterns across large language models (LLMs) in describing a coherent and holistic world view. By analyzing responses to carefully crafted question sets, the project aims to uncover latent biases, alignments, and worldview tendencies of LLMs. The findings will provide insights into how LLMs impact the knowledge economy and decision-making processes.
 
+## License
+Copyright © KNOWDYN Ltd. All rights reserved. To reuse this code, request an automatic permission for non-commercial use by sending an email to: ipcontrol@knowdyn.co.uk with the subject: Request WorldView License.
+
 ---
 
 ## Table of Contents
@@ -165,9 +168,3 @@ def perform_manova(df, metric_columns):
    python WorldView-D.py
    ```
 
----
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.
-```
