@@ -1,5 +1,5 @@
 # Install required libraries
-!pip install pandas scipy statsmodels sentence-transformers
+!pip install pandas scipy statsmodels sentence-transformers transformers
 
 # Import necessary libraries
 import os
@@ -8,10 +8,12 @@ import pandas as pd
 from scipy.stats import kruskal, chi2_contingency, f_oneway
 from statsmodels.multivariate.manova import MANOVA
 from sentence_transformers import SentenceTransformer, util
+from transformers import pipeline
 import numpy as np
 
-# Initialize sentence embedding model
+# Initialize models
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+sentiment_pipeline = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
 
 # Step 1: Load and Clean Responses and Questions
 
@@ -56,7 +58,7 @@ def load_questions(question_file):
                 })
         return pd.DataFrame(questions)
 
-# Step 2: Analysis Functions
+# Step 2: Extended Analysis Functions
 
 def semantic_similarity(response, question):
     response_embedding = embedding_model.encode(response, convert_to_tensor=True)
@@ -67,7 +69,9 @@ def word_count_analysis(response):
     return len(response.split())
 
 def sentiment_analysis(response):
-    return "Neutral"  # Placeholder for a more advanced sentiment model
+    """Perform sentiment analysis using a pre-trained transformer model."""
+    sentiment = sentiment_pipeline(response[:512])  # Limit to first 512 tokens for efficiency
+    return sentiment[0]['label']
 
 def thematic_coverage(response):
     if not isinstance(response, str) or not response.strip():  # Handle empty or non-text responses
@@ -77,6 +81,30 @@ def thematic_coverage(response):
     response_embedding = embedding_model.encode(response, convert_to_tensor=True)
     coverage_scores = [float(util.pytorch_cos_sim(response_embedding, topic).item()) for topic in classification]
     return sum(coverage_scores) / len(topics)
+
+def extract_key_themes(responses):
+    """Extract dominant themes or topics from responses."""
+    key_phrases = []
+    for response in responses:
+        response_embedding = embedding_model.encode(response, convert_to_tensor=True)
+        topics = ["justice", "power", "economy", "globalization", "ethics", "climate change"]
+        topic_embeddings = embedding_model.encode(topics, convert_to_tensor=True)
+        similarities = [float(util.pytorch_cos_sim(response_embedding, topic).item()) for topic in topic_embeddings]
+        key_phrases.append(topics[np.argmax(similarities)])
+    return key_phrases
+
+def worldview_induction(data):
+    """Induce the worldview of each LLM from its responses."""
+    worldview = {}
+    for llm_id, group in data.groupby("LLM_ID"):
+        key_themes = extract_key_themes(group["Response"])
+        worldview[llm_id] = {
+            "Dominant Themes": pd.Series(key_themes).value_counts().to_dict(),
+            "Average Semantic Similarity": group["Semantic_Similarity"].mean(),
+            "Average Word Count": group["Word_Count"].mean(),
+            "Sentiment Distribution": group["Sentiment"].value_counts(normalize=True).to_dict()
+        }
+    return worldview
 
 # Step 3: Process Responses with Corresponding Questions
 
@@ -100,7 +128,7 @@ def perform_statistical_tests(data):
     if data.empty:
         print("Error: No valid data for statistical analysis.")
         return results
-    
+
     # Kruskal-Wallis Test for numeric variables
     for col in ["Semantic_Similarity", "Word_Count", "Thematic_Coverage"]:
         grouped_data = [group[col].values for _, group in data.groupby("LLM_ID")]
@@ -108,7 +136,7 @@ def perform_statistical_tests(data):
             h_stat, p_val = kruskal(*grouped_data)
             results[f"{col}_Kruskal_H"] = h_stat
             results[f"{col}_Kruskal_p"] = p_val
-    
+
     # ANOVA for numeric comparisons
     for col in ["Semantic_Similarity", "Word_Count", "Thematic_Coverage"]:
         grouped_data = [group[col].dropna().values for _, group in data.groupby("LLM_ID")]
@@ -116,31 +144,36 @@ def perform_statistical_tests(data):
             f_stat, p_val = f_oneway(*grouped_data)
             results[f"{col}_ANOVA_F"] = f_stat
             results[f"{col}_ANOVA_p"] = p_val
-    
+
     # Chi-Square Test for Sentiment (categorical variable)
     sentiment_table = pd.crosstab(data["LLM_ID"], data["Sentiment"])
     if sentiment_table.shape[1] > 1:
         chi2, chi_p, _, _ = chi2_contingency(sentiment_table)
         results["Sentiment_Chi2"] = chi2
         results["Sentiment_p"] = chi_p
-    
+
     return results
 
 # Step 5: Main Execution
 if __name__ == "__main__":
     response_files = ["ResponsesToSet#1.json", "ResponsesToSet#2.json", "ResponsesToSet#3.json", "ResponsesToSet#4.json"]
     question_file = "Standard Four Question Sets.json"
-    
+
     responses = load_responses(response_files)
     questions = load_questions(question_file)
-    
+
     processed_data = process_responses_with_questions(responses, questions)
-    
+
     stats_results = perform_statistical_tests(processed_data)
-    
+
+    worldview_summary = worldview_induction(processed_data)
+
     processed_data.to_csv("Processed_Responses.csv", index=False)
     with open("Statistical_Results.txt", "w") as f:
         for key, value in stats_results.items():
             f.write(f"{key}: {value}\n")
-    
-    print("Analysis complete. Results saved as 'Processed_Responses.csv' and 'Statistical_Results.txt'.")
+
+    with open("WorldView_Summary.json", "w") as f:
+        json.dump(worldview_summary, f, indent=4)
+
+    print("Analysis complete. Results saved as 'Processed_Responses.csv', 'Statistical_Results.txt', and 'WorldView_Summary.json'.")
