@@ -1,154 +1,131 @@
 # Install necessary dependencies
 !pip install sentence-transformers transformers scikit-learn matplotlib networkx pandas
 
-import os
 import json
 import pandas as pd
 import numpy as np
-from sklearn.cluster import KMeans
-from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.feature_extraction.text import CountVectorizer
 from sentence_transformers import SentenceTransformer, util
 from transformers import pipeline
-from scipy.stats import kruskal, chi2_contingency
+from sklearn.decomposition import LatentDirichletAllocation
+from sklearn.feature_extraction.text import CountVectorizer
+from scipy.stats import kruskal
 from statsmodels.multivariate.manova import MANOVA
-import networkx as nx
 import matplotlib.pyplot as plt
+import seaborn as sns
 
-# Initialize advanced NLP models
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # Semantic embeddings
-sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+# Initialize Models
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+sentiment_pipeline = pipeline("sentiment-analysis")
+zero_shot_pipeline = pipeline("zero-shot-classification")
 
-# Step 1: Extract responses from JSON files
-def extract_responses_json(file_paths):
-    responses = []
-    for file_path in file_paths:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            data = json.load(file)
-            responses.extend(data.get("responses", []))
-    return responses
+# Categories for Inductive Reasoning (Fine-tuned and Granularized)
+geopolitical_labels = ["pro-West", "anti-globalization", "pro-sovereignty", "pro-globalization", "neutral"]
+ideological_labels = ["liberalism", "realism", "socialism", "conservatism", "anarchism", "fascism"]
+philosophical_labels = ["utilitarianism", "existentialism", "deontology", "pragmatism", "nihilism", "virtue ethics"]
 
-# Step 2: Advanced Semantic Analysis
-def semantic_similarity(response, reference):
-    response_embedding = embedding_model.encode(response, convert_to_tensor=True)
-    reference_embedding = embedding_model.encode(reference, convert_to_tensor=True)
-    return float(util.pytorch_cos_sim(response_embedding, reference_embedding).item())
-
-def sentiment_analysis(response):
-    sentiment = sentiment_pipeline(response[:512])  # Analyze only first 512 tokens for efficiency
-    return sentiment[0]['label'], sentiment[0]['score']
-
-# Step 3: Thematic Modeling
-def extract_themes(responses):
-    vectorizer = CountVectorizer(max_df=1.0, min_df=1, stop_words='english')  # Adjusted thresholds
-    dtm = vectorizer.fit_transform(responses)
-    lda_model = LatentDirichletAllocation(n_components=5, random_state=42)  # 5 topics
-    lda_model.fit(dtm)
-    topics = lda_model.transform(dtm)
-    return topics, vectorizer.get_feature_names_out()
-
-# Step 4: Inter-Topic Connectivity Analysis
-def calculate_interconnections(responses):
-    embeddings = embedding_model.encode(responses, convert_to_tensor=True)
-    similarity_matrix = util.pytorch_cos_sim(embeddings, embeddings).numpy()
-    graph = nx.Graph()
-    for i in range(len(responses)):
-        for j in range(i + 1, len(responses)):
-            if similarity_matrix[i, j] > 0.2:  # Lowered threshold
-                graph.add_edge(i, j, weight=similarity_matrix[i, j])
-    if len(graph) == 0:  # Handle empty graph
-        return None
-    return graph
-
-# Step 5: Process Responses into Metrics
-def process_responses(responses):
+# Step 1: Load and Parse JSON Files
+def load_responses(file_paths):
     data = []
-    reference_prompt = "Describe the causes and consequences of global challenges."
-    for entry in responses:
-        response = entry["Response"]
-        themes, _ = extract_themes([response])
-        sentiment_label, sentiment_score = sentiment_analysis(response)
-        graph = calculate_interconnections([response])
-        depth = nx.average_shortest_path_length(graph) if graph and nx.is_connected(graph) else 0
-
-        data.append({
-            "LLM_ID": entry["LLM_ID"],
-            "Set_ID": entry["Set_ID"],
-            "Semantic_Similarity": semantic_similarity(response, reference_prompt),
-            "Sentiment_Label": sentiment_label,
-            "Sentiment_Score": sentiment_score,
-            "Thematic_Diversity": len(themes[0]),
-            "Interconnections": depth
-        })
+    for file_path in file_paths:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                responses = json.load(file)
+                for llm_id, response in responses.items():
+                    if isinstance(response, str):  # Ensure response is a string
+                        data.append({"LLM_ID": llm_id, "Response": response})
+                    else:
+                        print(f"Invalid response format for {llm_id} in {file_path}")
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
     return pd.DataFrame(data)
 
-# Step 6: Statistical Analysis
-def perform_statistical_tests(data):
+# Step 2: Inductive Reasoning Analysis
+def analyze_inductive_reasoning(response):
+    # Geopolitical Classification
+    geo_result = zero_shot_pipeline(response, candidate_labels=geopolitical_labels, multi_label=True)
+    geo_scores = {label: score for label, score in zip(geo_result['labels'], geo_result['scores'])}
+
+    # Ideological Classification
+    ideology_result = zero_shot_pipeline(response, candidate_labels=ideological_labels, multi_label=True)
+    ideology_scores = {label: score for label, score in zip(ideology_result['labels'], ideology_result['scores'])}
+
+    # Philosophical Classification
+    philosophy_result = zero_shot_pipeline(response, candidate_labels=philosophical_labels, multi_label=True)
+    philosophy_scores = {label: score for label, score in zip(philosophy_result['labels'], philosophy_result['scores'])}
+
+    return geo_scores, ideology_scores, philosophy_scores
+
+# Step 3: Statistical Analysis
+def perform_statistical_tests(df, metric_columns):
     results = {}
+    for metric in metric_columns:
+        grouped_data = [group[metric].values for _, group in df.groupby("LLM_ID")]
+        h_stat, p_val = kruskal(*grouped_data)
+        results[f"{metric}_Kruskal_H"] = h_stat
+        results[f"{metric}_Kruskal_p"] = p_val
 
-    # Kruskal-Wallis Test for numeric variables
-    for col in ["Semantic_Similarity", "Sentiment_Score", "Thematic_Diversity", "Interconnections"]:
-        grouped_data = [group[col].values for _, group in data.groupby("LLM_ID")]
-        if all(np.allclose(group, grouped_data[0]) for group in grouped_data):
-            print(f"Skipping Kruskal-Wallis test for '{col}' as all values are identical.")
-            results[f"{col}_Kruskal_H"] = "Skipped (identical values)"
-            results[f"{col}_Kruskal_p"] = "Skipped (identical values)"
-        else:
-            h_stat, p_val = kruskal(*grouped_data)
-            results[f"{col}_Kruskal_H"] = h_stat
-            results[f"{col}_Kruskal_p"] = p_val
-
-    # Chi-Square Test for categorical variables
-    contingency_table = pd.crosstab(data["LLM_ID"], data["Sentiment_Label"])
-    if contingency_table.shape[1] > 1:
-        chi2, chi_p, _, _ = chi2_contingency(contingency_table)
-        results["Sentiment_Label_Chi2"] = chi2
-        results["Sentiment_Label_p"] = chi_p
-    else:
-        print("Skipping Chi-Square test for 'Sentiment_Label' as not enough categories exist.")
-        results["Sentiment_Label_Chi2"] = "Skipped (insufficient categories)"
-        results["Sentiment_Label_p"] = "Skipped (insufficient categories)"
-
-    # MANOVA for multivariate analysis
+    # MANOVA
     try:
-        manova = MANOVA.from_formula(
-            "Semantic_Similarity + Sentiment_Score + Thematic_Diversity + Interconnections ~ C(LLM_ID)",
-            data=data
-        )
+        formula = ' + '.join(metric_columns) + ' ~ C(LLM_ID)'
+        manova = MANOVA.from_formula(formula, data=df)
         results["MANOVA"] = str(manova.mv_test())
     except Exception as e:
         results["MANOVA_ERROR"] = str(e)
 
     return results
 
-# Step 7: Visualization
-def visualize_interconnections(graph, output_path="interconnections_graph.png"):
-    if graph is None or len(graph.nodes) == 0:  # Handle empty graph case
-        print("Graph is empty. No visualization created.")
-        return
+# Step 4: Visualization
+def plot_heatmap(df, metric_columns, output_path="heatmap.png"):
+    corr_matrix = df[metric_columns].corr()
     plt.figure(figsize=(10, 8))
-    nx.draw(graph, with_labels=True, node_color="lightblue", edge_color="gray", node_size=500, font_size=10)
+    sns.heatmap(corr_matrix, annot=True, cmap="coolwarm", fmt=".2f")
+    plt.title("Correlation Heatmap of Metrics")
     plt.savefig(output_path)
+    plt.close()
 
-# Step 8: Main Execution
-if __name__ == "__main__":
-    # Define file paths for JSON files
-    json_files = ["ResponsesToSet#1.json", "ResponsesToSet#2.json", "ResponsesToSet#3.json", "ResponsesToSet#4.json"]
+# Step 5: Main Execution
+def main():
+    # File paths for JSON files
+    file_paths = ["ResponsesToSet#1.json", "ResponsesToSet#2.json", "ResponsesToSet#3.json", "ResponsesToSet#4.json"]
 
-    # Extract, process, and analyze responses
-    responses = extract_responses_json(json_files)
-    data = process_responses(responses)
-    stats_results = perform_statistical_tests(data)
+    # Load responses
+    df = load_responses(file_paths)
+
+    # Add inductive reasoning metrics
+    geo_scores_list, ideology_scores_list, philosophy_scores_list = [], [], []
+    for response in df["Response"]:
+        geo_scores, ideology_scores, philosophy_scores = analyze_inductive_reasoning(response)
+        geo_scores_list.append(geo_scores)
+        ideology_scores_list.append(ideology_scores)
+        philosophy_scores_list.append(philosophy_scores)
+
+    df["Geopolitical_Scores"] = geo_scores_list
+    df["Ideological_Scores"] = ideology_scores_list
+    df["Philosophical_Scores"] = philosophy_scores_list
+
+    # Convert scores to numerical metrics for analysis
+    for label in geopolitical_labels:
+        df[label] = df["Geopolitical_Scores"].apply(lambda x: x.get(label, 0))
+    for label in ideological_labels:
+        df[label] = df["Ideological_Scores"].apply(lambda x: x.get(label, 0))
+    for label in philosophical_labels:
+        df[label] = df["Philosophical_Scores"].apply(lambda x: x.get(label, 0))
+
+    # Statistical Analysis
+    metric_columns = geopolitical_labels + ideological_labels + philosophical_labels
+    stats_results = perform_statistical_tests(df, metric_columns)
 
     # Save results
-    data.to_csv("WorldView-D_Analysis.csv", index=False)
-    with open("WorldView-D_Statistical_Results.txt", "w") as f:
+    df.to_csv("WorldView_Analysis.csv", index=False)
+    with open("Statistical_Results.txt", "w") as f:
         for key, value in stats_results.items():
             f.write(f"{key}: {value}\n")
 
-    # Generate interconnection graph for visualization
-    all_responses = [entry["Response"] for entry in responses]
-    graph = calculate_interconnections(all_responses)
-    visualize_interconnections(graph)
+    # Visualization
+    plot_heatmap(df, metric_columns, output_path="WorldView_Heatmap.png")
 
-    print("Deep analysis complete. Results saved as 'WorldView-D_Analysis.csv' and 'WorldView-D_Statistical_Results.txt'.")
+    print("Analysis complete. Results saved as 'WorldView_Analysis.csv', 'Statistical_Results.txt', and 'WorldView_Heatmap.png'.")
+
+if __name__ == "__main__":
+    main()
+
