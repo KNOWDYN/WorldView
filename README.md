@@ -2,7 +2,7 @@
 
 ## Introduction
 
-WorldView is a research project designed to study bias and reasoning patterns across large language models (LLMs) in describing a coherent and holistic world view. By analyzing responses to carefully crafted question sets, the project aims to uncover latent biases, alignments, and worldview tendencies of LLMs. The findings will provide insights into how LLMs impact the knowledge economy and decision-making processes.
+WorldView is a research project designed to study bias and reasoning patterns across large language models (LLMs) in describing a coherent and holistic world view. By analyzing responses to carefully crafted question sets, the project aims to uncover latent biases, alignments, and worldview tendencies of LLMs. The findings will provide insights into how LLMs impact the knowledge economy and decision-making processes. Visit: https://knowdyn.com/WorldView for more information.
 
 ## License
 Copyright © KNOWDYN Ltd. All rights reserved. To reuse this code, request an automatic permission for non-commercial use by sending an email to: ipcontrol@knowdyn.co.uk with the subject: Request WorldView License.
